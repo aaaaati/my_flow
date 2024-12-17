@@ -1,0 +1,92 @@
+0.配置flow
+需要安装anaconda，对应下方进行安装
+https://flow.readthedocs.io/en/latest/flow_setup.html#local-installation-of-flow
+以防下载太慢，可以给pip加镜像：https://www.runoob.com/w3cnote/pip-cn-mirror.html
+也可以给conda加镜像，原理类似
+
+如果出现conflict，在requirements.txt删除redis~=2.10.6
+
+如果出现“Failed to build mpi4py”，根据提示安装：
+sudo apt install libmpich-dev    # for MPICH
+sudo apt install libopenmpi-dev  # for Open MPI
+
+安装sumo使用：https://flow.readthedocs.io/en/latest/flow_setup.html#optional-direct-install-of-sumo-from-github
+其中需要安装辅助库：
+sudo apt-get install cmake python g++ libxerces-c-dev libfox-1.6-dev libgdal-dev libproj-dev libgl2ps-dev swig
+然后顺着ubuntu的代码来运行
+
+1.开启训练
+python examples/train.py singleagent_merge --num_cpus 5 --num_steps 1 --checkpoint_path ~/ray_results/stabilizing_the_ring/PPO_WaveAttenuationPOEnv-v0_d10b6fd4_2022-10-31_11-48-010i1s0a0b/checkpoint_1/checkpoint-1
+
+参数说明：
+以singleagent_merge为例，1个iteration跑了12000步，是num_steps1*HORIZON600*N_ROLLOUTS20。
+测试当num_steps为2时：为24000步
+测试当HORIZON为300时：为6000步
+测试当ROLLOUTS为10时：为6000步
+--checkpoint后面跟着的是需要继续跑的文件夹，平常不需要
+
+出现Box问题：https://github.com/ray-project/ray/issues/12681
+
+问题ModuleNotFoundError: No module named '_distutils_hack': pip install setuptools==57.5.0
+
+如果使用GPU：
+python examples/train.py singleagent_merge --num_cpus 5 --num_steps 1 --use_gpu
+
+2.仿真回放
+python flow/visualize/visualizer_rllib.py ../ray_results/stabilizing_open_network_merges/PPO_MergePOEnv-v0_0_2024-07-28_15-58-54xfqeyvpm 1 --gen_emission
+
+--gen_emission为后面生成time-space diagram用
+
+如果说出现Box的问题：修改.conda\envs\flow\lib\python3.7\site-packages\ray\rllib\models\preprocessors.py第62行为：“if False and not self._obs_space.contains(observation):”（去除判断）
+
+3.生成图表
+episodic reward:
+a) python flow/visualize/plot_ray_results.py ../ray_results/stabilizing_open_network_merges/PPO_MergePOEnv-v0_630de152_2022-12-20_17-47-59xovr95fk/progress.csv episode_reward_mean episode_reward_max episode_reward_min
+b) tensorboard --logdir=~/ray_results/stabilizing_open_network_merges/PPO_MergePOEnv-v0_630de152_2022-12-20_17-47-59xovr95fk
+c) do it in excel with progress.csv
+
+
+time-space diagram:
+for rl:
+python flow/visualize/time_space_diagram.py ../ray_results/PPO_MergePOEnv-v0_2022-12-20_21-21-51v_4l51d4/emission.csv ../ray_results/PPO_MergePOEnv-v0_2022-12-20_21-21-51v_4l51d4/params.json
+for no rl:
+python flow/visualize/time_space_diagram.py ../ray_results/stabilizing_open_network_merges/SUMO_MergePOEnv-1500-500-2023-01-08_21-29/emission.csv mergecav
+
+collision rate and emergency brake rate:
+注意：以下方法貌似不能加载rl智能体：可以直接在visualizer_rllib.py弹出的窗口观察数据
+右键打开show parameter，可看到departed vehicles，collision和emergency brake从console看出
+
+仿真回放时生成的sumocfg文件保存下来（/tmp/flow/debug/cfg，需要复制下来5个文件），添加：
+    <tripinfo-output value="tripinfo.xml"/>
+    <statistic-output value="statistic.xml"/>
+可获得这两个数据（在windows 11 sumo 1.14.1下运行成功）
+建议在<time>下添加end
+这里我们会得到collision
+可以通过仿真回放计算emergency brake的值，例：
+sumo-gui -c .\stabilizing_open_network_merges_20221220-2110391671541839.6847777.sumo.cfg --error-log error.log
+emergency brake 的信息就会保留在error.log内
+
+
+average speed and time to merge
+average speed: it is shown at the end of the visualizer_rllib.py
+time to merge: 
+	idea: a list of float and a dict with key(id_veh) and value(on_ramp_time); scan veh on ramp, add them in the dict if they do not exist; scan the key in the dict to see whether they are still on ramp, if yes stay, else time-to-merge=now-value, add it to the list; do not forget to average the list
+Test: OK - printed at the end of the visualizer_rllib.py
+
+simulate的如何获取average speed和time to merge
+在Experiment.py中有打印average speed，需要按照visualizer_rllib.py添加time to merge：OK
+
+4.叶老师的代码
+需要对flow/core/kernel/vehicle/traci.py进行合并
+departed_ids, arrived_ids, force_color_update, color_vehicles, previous_speeds, num_rl_vehicles, 不用理会，是不同flow版本的修改
+added modification related to VAR_ACCELERATION
+added modification related to __first_n_ids
+added function get_rejection_headway
+
+recover color mode
+
+delete noise for rl vehicle in singleagent_mergecavp.py
+
+如果出现：ValueError: Cannot feed value of shape (100, 32) for Tensor 'default_policy/Placeholder_default_policy/fc_1/kernel:0', which has shape '(25, 32)'
+check envs/merge.py
+
